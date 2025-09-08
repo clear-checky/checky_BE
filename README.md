@@ -8,12 +8,12 @@ AI 계약서 독소조항 분석기 백엔드 API
 
 ```bash
 # 가상환경 생성 및 활성화
-python -m venv venv
+python3 -m venv venv
 source venv/bin/activate  # macOS/Linux
 # venv\Scripts\activate   # Windows
 
 # 의존성 설치
-pip install -r requirements.txt
+pip3 install -r requirements.txt
 
 # 환경 변수 설정
 cp env.example .env

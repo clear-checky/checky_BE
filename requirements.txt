@@ -9,14 +9,14 @@ python-multipart==0.0.6
 python-dotenv==1.0.0
 
 # 데이터 검증
-pydantic==2.5.0
-pydantic-settings==2.1.0
+pydantic==2.9.0
+pydantic-settings==2.6.0
 
 # HTTP 클라이언트 (AI API 호출용)
 httpx==0.25.2
 
-# 파일 처리
-Pillow==10.1.0
+# 파일 처리 (나중에 필요할 때 설치)
+# Pillow==10.4.0
 
 # 개발용 도구
 pytest==7.4.3

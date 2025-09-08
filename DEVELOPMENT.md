@@ -12,15 +12,15 @@
 ### 1. Python 설치 확인
 
 ```bash
-python --version
+python3 --version
 # Python 3.8 이상이어야 함
 ```
 
 ### 2. 가상환경 생성 및 활성화
 
 ```bash
-# 가상환경 생성
-python -m venv venv
+# 가상환경 생성 (macOS/Linux)
+python3 -m venv venv
 
 # 가상환경 활성화 (macOS/Linux)
 source venv/bin/activate
@@ -32,7 +32,11 @@ venv\Scripts\activate
 ### 3. 의존성 패키지 설치
 
 ```bash
-pip install -r requirements.txt
+# pip 업그레이드 (선택 사항)
+pip3 install --upgrade pip
+
+# 패키지 설치
+pip3 install -r requirements.txt
 ```
 
 ### 4. 환경 변수 설정
@@ -48,6 +52,11 @@ cp env.example .env
 ### 5. 서버 실행
 
 ```bash
+# 가상환경이 활성화되어 있는지 확인 (프롬프트 앞에 (venv)가 있어야 함)
+# 만약 (venv)가 없다면 다시 활성화:
+source venv/bin/activate
+
+# 서버 실행
 uvicorn app.main:app --reload
 ```
 
@@ -165,7 +174,7 @@ test: 테스트 추가/수정
 
    ```bash
    # pip 업그레이드
-   pip install --upgrade pip
+   pip3 install --upgrade pip
    ```
 
 3. **가상환경 활성화 실패**
