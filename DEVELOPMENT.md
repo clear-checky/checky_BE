@@ -73,12 +73,10 @@ checky_BE/
 │   ├── __init__.py
 │   ├── main.py            # FastAPI 앱 진입점
 │   ├── routers/           # API 엔드포인트들
-│   │   ├── contract/      # 계약서 관련 API
-│   │   └── chat/          # 챗봇 관련 API
+│   │   └── contract/      # 계약서 관련 API
 │   ├── models/            # 데이터베이스 모델들
 │   └── schemas/           # API 요청/응답 스키마들
-│       ├── contract/      # 계약서 관련 스키마
-│       └── chat/          # 챗봇 관련 스키마
+│       └── contract/      # 계약서 관련 스키마
 ├── uploads/               # 파일 업로드 저장소
 ├── tests/                 # 테스트 코드
 ├── requirements.txt       # Python 의존성
@@ -90,11 +88,11 @@ checky_BE/
 
 ### API 개발 순서
 
-1. **스키마 정의** (`app/schemas/contract/` 또는 `app/schemas/chat/`)
+1. **스키마 정의** (`app/schemas/contract/`)
    - 요청/응답 데이터 구조 정의
 2. **모델 생성** (`app/models/`)
    - 데이터베이스 테이블 구조 정의
-3. **라우터 구현** (`app/routers/contract/` 또는 `app/routers/chat/`)
+3. **라우터 구현** (`app/routers/contract/`)
    - API 엔드포인트 구현
 4. **메인 앱에 등록** (`app/main.py`)
    - 라우터를 메인 앱에 연결
@@ -107,11 +105,7 @@ checky_BE/
 - AI 계약서 분석
 - 분석 결과 조회
 - 분석 리포트 다운로드
-
-#### 챗봇 관련 기능 (`app/routers/chat/`, `app/schemas/chat/`)
-
-- **계약서 기반 챗봇**: 특정 계약서에 대해 질문
-- **일반 챗봇**: 계약서와 관련 없는 일반적인 질문
+- 챗봇
 
 ### 파일 명명 규칙
 
