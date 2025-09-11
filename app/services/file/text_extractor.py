@@ -1,7 +1,7 @@
 import os
 import asyncio
 from typing import Optional
-from app.schemas.contract.file_upload import FileType
+from app.schemas.upload.file_upload import FileType
 import mimetypes
 
 # PDF 처리
@@ -19,10 +19,12 @@ except ImportError:
 # 이미지 OCR 처리
 try:
     from PIL import Image
-    import pytesseract
+    import easyocr
+    import pillow_heif
+    pillow_heif.register_heif_opener()  # HEIF 지원 활성화
 except ImportError:
     Image = None
-    pytesseract = None
+    easyocr = None
 
 # 텍스트 파일 처리
 try:
@@ -37,8 +39,17 @@ class TextExtractor:
             FileType.PDF: pypdf is not None,
             FileType.DOCX: docx2txt is not None,
             FileType.TXT: True,
-            FileType.IMAGE: pytesseract is not None and Image is not None,
+            FileType.IMAGE: easyocr is not None,
         }
+        
+        # EasyOCR 리더 초기화
+        self.easyocr_reader = None
+        if easyocr is not None:
+            try:
+                self.easyocr_reader = easyocr.Reader(['ko', 'en'])
+            except Exception as e:
+                print(f"EasyOCR 초기화 실패: {str(e)}")
+                self.easyocr_reader = None
 
     async def extract_text(self, file_path: str, file_type: FileType) -> Optional[str]:
         """파일에서 텍스트를 추출합니다."""
@@ -103,18 +114,37 @@ class TextExtractor:
 
     async def _extract_from_image(self, file_path: str) -> Optional[str]:
         """이미지에서 OCR로 텍스트를 추출합니다."""
-        if not pytesseract or not Image:
-            return "OCR 라이브러리가 설치되지 않았습니다."
+        # EasyOCR 사용
+        if self.easyocr_reader is not None:
+            try:
+                # 이미지 전처리
+                image = Image.open(file_path)
+                
+                # 이미지 크기 조정 (OCR 성능 향상)
+                if image.width > 2000 or image.height > 2000:
+                    image.thumbnail((2000, 2000), Image.Resampling.LANCZOS)
+                
+                # 회색조 변환 (OCR 정확도 향상)
+                if image.mode != 'L':
+                    image = image.convert('L')
+                
+                # 전처리된 이미지 저장
+                processed_path = file_path.replace('.', '_processed.')
+                image.save(processed_path)
+                
+                # EasyOCR로 텍스트 추출
+                results = self.easyocr_reader.readtext(processed_path)
+                text = ' '.join([result[1] for result in results])
+                
+                # 임시 파일 삭제
+                if os.path.exists(processed_path):
+                    os.remove(processed_path)
+                
+                return text.strip()
+            except Exception as e:
+                return f"EasyOCR 실패: {str(e)}"
         
-        try:
-            # 이미지 열기
-            image = Image.open(file_path)
-            
-            # OCR로 텍스트 추출
-            text = pytesseract.image_to_string(image, lang='kor+eng')
-            return text.strip()
-        except Exception as e:
-            return f"이미지 OCR 실패: {str(e)}"
+        return "EasyOCR이 설치되지 않았습니다."
 
     def is_supported(self, file_type: FileType) -> bool:
         """파일 타입이 지원되는지 확인합니다."""

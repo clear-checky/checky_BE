@@ -6,19 +6,19 @@ from typing import Optional
 import aiofiles
 import mimetypes
 from datetime import datetime
-
-from app.schemas.contract.file_upload import (
+from app.schemas.upload.file_upload import (
     FileUploadResponse,
     FileValidationError,
     FileType,
     UploadStatusResponse,
     AnalysisResult
 )
-from app.services.text_extractor import text_extractor
+from app.services.file.text_extractor import text_extractor
+from app.services.file.file_cleaner import file_cleaner
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
-UPLOAD_DIR = "uploads"
+UPLOAD_DIR = "files"
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB (프론트엔드와 동일)
 ALLOWED_EXTENSIONS = {'.pdf', '.docx', '.doc', '.txt', '.jpg', '.jpeg', '.png'}
 
@@ -117,13 +117,21 @@ async def get_upload_status(file_id: str):
     try:
         # 파일 존재 여부 확인
         file_exists = False
+        file_path = None
         for filename in os.listdir(UPLOAD_DIR):
             if filename.startswith(file_id):
                 file_exists = True
+                file_path = os.path.join(UPLOAD_DIR, filename)
                 break
         
         if not file_exists:
             raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다.")
+        
+        # 파일 만료 확인
+        if file_path and file_cleaner.is_file_expired(file_path):
+            # 만료된 파일 삭제
+            await file_cleaner.clean_file_now(file_path)
+            raise HTTPException(status_code=410, detail="파일이 만료되어 삭제되었습니다. (24시간 TTL)")
         
         # Mock 상태 전환 로직
         if file_id not in file_statuses:
@@ -167,13 +175,21 @@ async def get_analysis_result(file_id: str):
     try:
         # 파일 존재 여부 확인
         file_exists = False
+        file_path = None
         for filename in os.listdir(UPLOAD_DIR):
             if filename.startswith(file_id):
                 file_exists = True
+                file_path = os.path.join(UPLOAD_DIR, filename)
                 break
         
         if not file_exists:
             raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다.")
+        
+        # 파일 만료 확인
+        if file_path and file_cleaner.is_file_expired(file_path):
+            # 만료된 파일 삭제
+            await file_cleaner.clean_file_now(file_path)
+            raise HTTPException(status_code=410, detail="파일이 만료되어 삭제되었습니다. (24시간 TTL)")
         
         # Mock 분석 결과 데이터
         return AnalysisResult(
