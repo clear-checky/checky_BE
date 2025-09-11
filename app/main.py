@@ -15,3 +15,7 @@ async def root():
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
+
+
+from app.routers.contract import analyze
+app.include_router(analyze.router)
