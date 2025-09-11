@@ -15,3 +15,4 @@ async def chat_completion(messages, temperature=0.2, timeout=60):
         r = await client.post(f"{BASE_URL}/chat/completions", headers=headers, json=data)
         r.raise_for_status()
         return r.json()
+
