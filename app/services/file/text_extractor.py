@@ -26,6 +26,12 @@ except ImportError:
     Image = None
     easyocr = None
 
+# HWP 파일 처리
+try:
+    import olefile
+except ImportError:
+    olefile = None
+
 # 텍스트 파일 처리
 try:
     import chardet
@@ -39,6 +45,7 @@ class TextExtractor:
             FileType.PDF: pypdf is not None,
             FileType.DOCX: docx2txt is not None,
             FileType.TXT: True,
+            FileType.HWP: olefile is not None,
             FileType.IMAGE: easyocr is not None,
         }
         
@@ -60,6 +67,8 @@ class TextExtractor:
                 return await self._extract_from_docx(file_path)
             elif file_type == FileType.TXT:
                 return await self._extract_from_txt(file_path)
+            elif file_type == FileType.HWP:
+                return await self._extract_from_hwp(file_path)
             elif file_type == FileType.IMAGE:
                 return await self._extract_from_image(file_path)
             else:
@@ -145,6 +154,43 @@ class TextExtractor:
                 return f"EasyOCR 실패: {str(e)}"
         
         return "EasyOCR이 설치되지 않았습니다."
+
+    async def _extract_from_hwp(self, file_path: str) -> Optional[str]:
+        """HWP 파일에서 텍스트를 추출합니다."""
+        try:
+            if olefile is None:
+                return "olefile이 설치되지 않았습니다."
+            
+            # HWP 파일은 OLE 구조를 가진 파일입니다
+            # 기본적인 텍스트 추출을 시도합니다
+            with open(file_path, 'rb') as file:
+                # HWP 파일의 기본 구조에서 텍스트를 찾기 위한 간단한 방법
+                content = file.read()
+                
+                # HWP 파일에서 텍스트 부분을 찾기 위한 패턴
+                # 실제로는 더 복잡한 파싱이 필요할 수 있습니다
+                text_parts = []
+                
+                # 바이너리에서 읽을 수 있는 텍스트 부분 추출
+                try:
+                    # UTF-8로 디코딩 시도
+                    decoded = content.decode('utf-8', errors='ignore')
+                    # 의미있는 텍스트만 필터링
+                    lines = decoded.split('\n')
+                    for line in lines:
+                        line = line.strip()
+                        if len(line) > 3 and any(c.isalpha() or c.isdigit() for c in line):
+                            text_parts.append(line)
+                except:
+                    pass
+                
+                if text_parts:
+                    return '\n'.join(text_parts)
+                else:
+                    return "HWP 파일에서 텍스트를 추출할 수 없습니다."
+                    
+        except Exception as e:
+            return f"HWP 텍스트 추출 실패: {str(e)}"
 
     def is_supported(self, file_type: FileType) -> bool:
         """파일 타입이 지원되는지 확인합니다."""

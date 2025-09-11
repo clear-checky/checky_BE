@@ -20,7 +20,7 @@ router = APIRouter(prefix="/upload", tags=["upload"])
 
 UPLOAD_DIR = "files"
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB (프론트엔드와 동일)
-ALLOWED_EXTENSIONS = {'.pdf', '.docx', '.doc', '.txt', '.jpg', '.jpeg', '.png'}
+ALLOWED_EXTENSIONS = {'.pdf', '.docx', '.doc', '.txt', '.hwp', '.jpg', '.jpeg', '.png'}
 
 # 업로드 디렉토리 생성
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -51,6 +51,8 @@ def get_file_type(filename: str) -> FileType:
         return FileType.DOCX
     elif ext == '.txt':
         return FileType.TXT
+    elif ext == '.hwp':
+        return FileType.HWP
     elif ext in ['.jpg', '.jpeg', '.png']:
         return FileType.IMAGE
     else:

@@ -7,6 +7,7 @@ class FileType(str, Enum):
     PDF = "PDF"
     DOCX = "DOCX"
     TXT = "TXT"
+    HWP = "HWP"
     IMAGE = "IMAGE"
     UNKNOWN = "UNKNOWN"
 
