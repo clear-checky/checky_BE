@@ -1,0 +1,301 @@
+from fastapi import APIRouter, UploadFile, File, HTTPException
+import os
+import uuid
+import time
+from typing import Optional
+import aiofiles
+import mimetypes
+from datetime import datetime
+from app.schemas.upload.file_upload import (
+    FileUploadResponse,
+    FileValidationError,
+    FileType,
+    UploadStatusResponse,
+    AnalysisResult
+)
+from app.services.file.text_extractor import text_extractor
+from app.services.file.file_cleaner import file_cleaner
+
+router = APIRouter(prefix="/upload", tags=["upload"])
+
+UPLOAD_DIR = "files"
+MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB (프론트엔드와 동일)
+ALLOWED_EXTENSIONS = {'.pdf', '.docx', '.doc', '.txt', '.hwp', '.jpg', '.jpeg', '.png'}
+
+# 업로드 디렉토리 생성
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# 파일별 상태 저장 (실제로는 DB 사용)
+file_statuses = {}
+
+
+def validate_file(file: UploadFile) -> tuple[bool, Optional[str]]:
+    """파일 유효성 검사"""
+    if file.size and file.size > MAX_FILE_SIZE:
+        return False, f"파일 크기가 너무 큽니다. 최대 {MAX_FILE_SIZE // (1024*1024)}MB까지 허용됩니다."
+    
+    if file.filename:
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext not in ALLOWED_EXTENSIONS:
+            return False, f"지원하지 않는 파일 형식입니다. 허용된 형식: {', '.join(ALLOWED_EXTENSIONS)}"
+    
+    return True, None
+
+
+def get_file_type(filename: str) -> FileType:
+    """파일명으로부터 파일 타입 결정"""
+    ext = os.path.splitext(filename)[1].lower()
+    if ext == '.pdf':
+        return FileType.PDF
+    elif ext in ['.doc', '.docx']:
+        return FileType.DOCX
+    elif ext == '.txt':
+        return FileType.TXT
+    elif ext == '.hwp':
+        return FileType.HWP
+    elif ext in ['.jpg', '.jpeg', '.png']:
+        return FileType.IMAGE
+    else:
+        return FileType.UNKNOWN
+
+
+async def save_uploaded_file(file: UploadFile) -> tuple[str, str]:
+    """업로드된 파일을 저장하고 file_id와 file_path 반환"""
+    file_id = str(uuid.uuid4())
+    file_ext = os.path.splitext(file.filename)[1].lower()
+    file_path = os.path.join(UPLOAD_DIR, f"{file_id}{file_ext}")
+    
+    async with aiofiles.open(file_path, "wb") as f:
+        while content := await file.read(1024):
+            await f.write(content)
+    
+    return file_id, file_path
+
+
+@router.post("/", response_model=FileUploadResponse)
+async def upload_file(
+    file: UploadFile = File(..., description="업로드할 파일"),
+    description: Optional[str] = None
+):
+    """파일 업로드 및 텍스트 추출"""
+    try:
+        # 파일 유효성 검사
+        is_valid, error_message = validate_file(file)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=error_message)
+        
+        # 파일 저장
+        file_id, file_path = await save_uploaded_file(file)
+        file_type = get_file_type(file.filename)
+        file_size = os.path.getsize(file_path)
+        
+        # 텍스트 추출
+        extracted_text = None
+        try:
+            extracted_text = await text_extractor.extract_text(file_path, file_type)
+        except Exception as e:
+            print(f"텍스트 추출 실패: {str(e)}")
+            # 텍스트 추출 실패해도 업로드는 성공으로 처리
+        
+        return FileUploadResponse(
+            success=True,
+            message="파일이 성공적으로 업로드되었습니다.",
+            file_id=file_id,
+            file_name=file.filename,
+            file_size=file_size,
+            file_type=file_type,
+            extracted_text=extracted_text
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"파일 업로드 중 오류가 발생했습니다: {str(e)}")
+
+
+@router.get("/status/{file_id}", response_model=UploadStatusResponse)
+async def get_upload_status(file_id: str):
+    """업로드 상태 확인 (Mock 상태 전환)"""
+    try:
+        # 파일 존재 여부 확인
+        file_exists = False
+        file_path = None
+        for filename in os.listdir(UPLOAD_DIR):
+            if filename.startswith(file_id):
+                file_exists = True
+                file_path = os.path.join(UPLOAD_DIR, filename)
+                break
+        
+        if not file_exists:
+            raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다.")
+        
+        # 파일 만료 확인
+        if file_path and file_cleaner.is_file_expired(file_path):
+            # 만료된 파일 삭제
+            await file_cleaner.clean_file_now(file_path)
+            raise HTTPException(status_code=410, detail="파일이 만료되어 삭제되었습니다. (24시간 TTL)")
+        
+        # Mock 상태 전환 로직
+        if file_id not in file_statuses:
+            file_statuses[file_id] = {
+                "status": "uploaded",
+                "created_at": time.time()
+            }
+        
+        current_time = time.time()
+        created_at = file_statuses[file_id]["created_at"]
+        elapsed_time = current_time - created_at
+        
+        # 5초 후 processing, 10초 후 completed
+        if elapsed_time < 5:
+            status = "uploaded"
+            message = "파일이 업로드되었습니다."
+        elif elapsed_time < 10:
+            status = "processing"
+            message = "분석 중입니다..."
+        else:
+            status = "completed"
+            message = "분석이 완료되었습니다."
+        
+        file_statuses[file_id]["status"] = status
+        
+        return UploadStatusResponse(
+            file_id=file_id,
+            status=status,
+            message=message
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"상태 확인 중 오류가 발생했습니다: {str(e)}")
+
+
+@router.get("/analysis/{file_id}", response_model=AnalysisResult)
+async def get_analysis_result(file_id: str):
+    """분석 결과 조회 (Mock 데이터)"""
+    try:
+        # 파일 존재 여부 확인
+        file_exists = False
+        file_path = None
+        for filename in os.listdir(UPLOAD_DIR):
+            if filename.startswith(file_id):
+                file_exists = True
+                file_path = os.path.join(UPLOAD_DIR, filename)
+                break
+        
+        if not file_exists:
+            raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다.")
+        
+        # 파일 만료 확인
+        if file_path and file_cleaner.is_file_expired(file_path):
+            # 만료된 파일 삭제
+            await file_cleaner.clean_file_now(file_path)
+            raise HTTPException(status_code=410, detail="파일이 만료되어 삭제되었습니다. (24시간 TTL)")
+        
+        # Mock 분석 결과 데이터
+        return AnalysisResult(
+            id=file_id,
+            title="계약서 분석 결과",
+            articles=[
+                {
+                    "id": 1,
+                    "title": "제1조 (근로계약 기간)",
+                    "sentences": [
+                        {
+                            "id": "s1-1",
+                            "text": "근로계약 기간은 2025년 1월 1일부터 2025년 12월 31일까지로 한다.",
+                            "risk": "safe",
+                            "why": "표준 계약 조건을 따르고 있습니다.",
+                            "fix": "추가 조치 불필요"
+                        },
+                        {
+                            "id": "s1-2",
+                            "text": "계약 기간 만료 후 상호 협의에 따라 갱신할 수 있다.",
+                            "risk": "safe",
+                            "why": "갱신 조건이 명확하게 명시되어 있습니다.",
+                            "fix": "추가 조치 불필요"
+                        }
+                    ]
+                },
+                {
+                    "id": 2,
+                    "title": "제2조 (근무 장소 및 업무)",
+                    "sentences": [
+                        {
+                            "id": "s2-1",
+                            "text": "근무 장소는 회사가 정한 사업장으로 한다.",
+                            "risk": "safe",
+                            "why": "근무 장소가 명확하게 지정되어 있습니다.",
+                            "fix": "추가 조치 불필요"
+                        },
+                        {
+                            "id": "s2-2",
+                            "text": "근로자의 주요 업무는 고객 응대 및 매장 관리로 한다.",
+                            "risk": "safe",
+                            "why": "업무 내용이 구체적으로 명시되어 있습니다.",
+                            "fix": "추가 조치 불필요"
+                        }
+                    ]
+                },
+                {
+                    "id": 3,
+                    "title": "제3조 (근로시간 및 휴게)",
+                    "sentences": [
+                        {
+                            "id": "s3-1",
+                            "text": "근로시간은 1일 8시간, 주 40시간을 원칙으로 한다.",
+                            "risk": "safe",
+                            "why": "법정 근로시간을 준수하고 있습니다.",
+                            "fix": "추가 조치 불필요"
+                        },
+                        {
+                            "id": "s3-2",
+                            "text": "근로자는 근로시간 중 1시간의 휴게시간을 가진다.",
+                            "risk": "safe",
+                            "why": "휴게시간이 적절하게 보장되고 있습니다.",
+                            "fix": "추가 조치 불필요"
+                        },
+                        {
+                            "id": "s3-3",
+                            "text": "휴게시간 중에도 상급자 지시에 즉시 응해야 하며, 이 시간은 근로시간으로 보지 않는다.",
+                            "risk": "danger",
+                            "why": "대기·콜 대기 등 사용자의 지휘감독 하에 있으면 실질적 휴게가 아니며 근로시간으로 볼 여지 큼.",
+                            "fix": "휴게시간 동안 지휘감독을 배제하여 자유로운 이용을 보장하고, 불가피한 대기·지시가 있는 경우 해당 시간은 근로시간으로 본다."
+                        }
+                    ]
+                }
+            ]
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"분석 결과 조회 중 오류가 발생했습니다: {str(e)}")
+
+
+@router.delete("/{file_id}")
+async def delete_uploaded_file(file_id: str):
+    """업로드된 파일 삭제"""
+    try:
+        deleted = False
+        for filename in os.listdir(UPLOAD_DIR):
+            if filename.startswith(file_id):
+                file_path = os.path.join(UPLOAD_DIR, filename)
+                os.remove(file_path)
+                deleted = True
+                break
+        
+        if not deleted:
+            raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다.")
+        
+        # 상태 정보도 삭제
+        if file_id in file_statuses:
+            del file_statuses[file_id]
+        
+        return {"success": True, "message": "파일이 삭제되었습니다."}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"파일 삭제 중 오류가 발생했습니다: {str(e)}")

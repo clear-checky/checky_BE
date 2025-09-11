@@ -15,8 +15,23 @@ pydantic-settings==2.6.0
 # HTTP 클라이언트 (AI API 호출용)
 httpx==0.25.2
 
-# 파일 처리 (나중에 필요할 때 설치)
-# Pillow==10.4.0
+# 파일 처리
+Pillow==10.4.0
+aiofiles==23.2.1
+
+# OCR 라이브러리
+google-cloud-vision==3.10.2
+easyocr==1.7.0
+pytesseract==0.3.10
+
+# 문서 처리
+pypdf==4.0.1
+docx2txt==0.8
+chardet==5.2.0
+olefile==0.46
+
+# 테스트용
+requests==2.31.0
 
 # 개발용 도구
 pytest==7.4.3
