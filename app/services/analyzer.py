@@ -78,15 +78,21 @@ async def classify_articles(articles: List[Article]) -> List[Article]:
 
     return articles
 
-def compute_counts(articles: List[Article]) -> dict:
+def compute_counts(articles):
     danger = warning = safe = total = 0
-    for a in articles:
-        for x in a.sentences:
+    for art in articles:
+        for s in art.sentences:
             total += 1
-            if x.risk == "danger": danger += 1
-            elif x.risk == "warning": warning += 1
-            else: safe += 1
+            if s.risk == "danger":
+                danger += 1
+            elif s.risk == "warning":
+                warning += 1
+            else:
+                safe += 1
     return {"danger": danger, "warning": warning, "safe": safe, "total": total}
 
+
 def safety_percent(counts: dict) -> float:
-    return 100.0 if counts["total"] == 0 else round((counts["safe"]/counts["total"])*1000)/10
+    if counts["total"] == 0:
+        return 100.0
+    return round((counts["safe"] / counts["total"]) * 1000) / 10
