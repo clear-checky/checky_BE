@@ -3,7 +3,7 @@ from typing import List
 from app.schemas.contract.types import Article
 from .openai_client import chat_completion
 
-PROMPT = """당신은 한국 근로계약서 점검 전문가입니다. 모든 답변은 한국어로만 하며,
+PROMPT = """당신은 계약서 분석 전문가입니다. 모든 답변은 한국어로만 하며,
 요청된 JSON 형식과 길이를 반드시 지킵니다. 설명 문구나 마크다운을 출력하지 않습니다.
 
 다음 '문장들' 배열(길이 {n})의 각 항목을 아래 기준으로 분류하세요.
@@ -28,7 +28,7 @@ PROMPT = """당신은 한국 근로계약서 점검 전문가입니다. 모든 �
   • 법정 기준 충족 또는 통상적·명확한 조항
 
 [타이브레이커]
-- 애매하면 근로자 보호 관점에서 더 보수적으로(“warning” → “danger” 우선).
+- 애매하면 근로자 보호 관점에서 더 보수적으로("warning" → "danger" 우선).
 
 [출력 형식(배열, 길이 {n}) — 예시]
 [
@@ -51,16 +51,40 @@ async def classify_articles(articles: List[Article]) -> List[Article]:
         if not art.sentences:
             continue
 
+        # 각 조항의 문장들을 AI에게 분석 요청
         texts = [s.text for s in art.sentences]
-
+        
         if not api_key:
             parsed = _fallback(len(texts))
         else:
-            user = PROMPT + "\n\n문장들:\n" + json.dumps(texts, ensure_ascii=False)
+            # 조항별 분석을 위한 프롬프트 생성
+            article_prompt = f"""다음은 계약서의 '{art.title}' 조항에 속한 문장들입니다.
+각 문장의 위험도를 분석해주세요.
+
+문장들:
+{json.dumps(texts, ensure_ascii=False)}
+
+위험도는 다음 중 하나로 분류해주세요:
+- danger: 위험한 조항 (법적 문제 가능성 높음)
+- warning: 주의가 필요한 조항 (개선 권장)
+- safe: 안전한 조항 (문제없음)
+
+각 문장에 대해 다음을 제공해주세요:
+1. 위험도 (danger/warning/safe)
+2. 위험한 이유 (why)
+3. 개선 방안 (fix)
+
+반드시 길이가 {len(texts)}인 JSON 배열만 반환하세요:
+[
+  {{"risk":"danger","why":"해고예고·서면통지 의무 위반 소지","fix":"해고는 정당사유·서면통지·예고수당 원칙 준수"}},
+  {{"risk":"warning","why":"경업금지 기간·범위 과도","fix":"기간 1년 내, 직무·지역 한정 및 비밀보호 범위 특정"}},
+  {{"risk":"safe","why":"법정 기준에 부합","fix":""}}
+]"""
+            
             try:
                 res = await chat_completion([
-                    {"role": "system", "content": "한국어로 간결하게 답하세요. 반드시 JSON 배열만 반환."},
-                    {"role": "user", "content": user},
+                    {"role": "system", "content": "당신은 계약서 분석 전문가입니다. 한국어로 간결하게 답하세요. 반드시 JSON 배열만 반환하세요."},
+                    {"role": "user", "content": article_prompt},
                 ])
                 content = res["choices"][0]["message"]["content"]
                 parsed = json.loads(content)
@@ -68,9 +92,11 @@ async def classify_articles(articles: List[Article]) -> List[Article]:
                     parsed = _fallback(len(texts))
                 if len(parsed) != len(texts):
                     parsed = (parsed + _fallback(len(texts)))[:len(texts)]
-            except Exception:
+            except Exception as e:
+                print(f"AI 분석 실패: {str(e)}")
                 parsed = _fallback(len(texts))
 
+        # 결과를 문장에 업데이트
         for s, p in zip(art.sentences, parsed):
             s.risk = p.get("risk", s.risk)
             s.why  = p.get("why", s.why)

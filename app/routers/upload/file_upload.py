@@ -13,6 +13,7 @@ from app.schemas.upload.file_upload import (
     UploadStatusResponse,
     AnalysisResult
 )
+from app.schemas.contract.types import AnalyzeRequest, AnalyzeResponse
 from app.services.file.text_extractor import text_extractor
 from app.services.file.file_cleaner import file_cleaner
 
@@ -27,6 +28,9 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # 파일별 상태 저장 (실제로는 DB 사용)
 file_statuses = {}
+
+# 분석 결과 저장소 (실제로는 DB 사용 권장)
+analysis_results = {}
 
 
 def validate_file(file: UploadFile) -> tuple[bool, Optional[str]]:
@@ -193,6 +197,10 @@ async def get_analysis_result(task_id: str):
             await file_cleaner.clean_file_now(file_path)
             raise HTTPException(status_code=410, detail="파일이 만료되어 삭제되었습니다. (24시간 TTL)")
         
+        # 실제 분석 결과가 있으면 반환, 없으면 Mock 데이터 반환
+        if task_id in analysis_results:
+            return analysis_results[task_id]
+        
         # Mock 분석 결과 데이터
         return AnalysisResult(
             id=task_id,
@@ -273,6 +281,20 @@ async def get_analysis_result(task_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"분석 결과 조회 중 오류가 발생했습니다: {str(e)}")
 
+@router.post("/save-analysis/{task_id}")
+async def save_analysis_result(task_id: str, analysis_data: AnalyzeResponse):
+    """분석 결과 저장 (프론트엔드에서 호출)"""
+    try:
+        # 분석 결과를 저장
+        analysis_results[task_id] = AnalysisResult(
+            id=task_id,
+            title="계약서 분석 결과",
+            articles=analysis_data.articles
+        )
+        
+        return {"success": True, "message": "분석 결과가 저장되었습니다."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"분석 결과 저장 중 오류가 발생했습니다: {str(e)}")
 
 @router.delete("/{task_id}")
 async def delete_uploaded_file(task_id: str):
