@@ -20,43 +20,74 @@ def group_articles_by_clause(articles):
     
     for article in articles:
         for sentence in article.sentences:
-            # 문장 안에서 "제n조" 패턴 찾기
-            clause_match = re.search(r'제\s*(\d+)\s*조', sentence.text)
+            # 문장 안에서 "제n조 (내용)" 패턴 찾기
+            clause_match = re.search(r'제\s*(\d+)\s*조\s*(\([^)]+\))?', sentence.text)
             
             if clause_match:
                 # 새로운 조항이 시작됨
                 if current_clause and current_sentences:
-                    # 이전 조항 저장
+                    # 이전 조항 저장 (제목은 이미 생성됨)
                     grouped[current_clause] = {
-                        'title': f'제{current_clause}조',
+                        'title': grouped[current_clause]['title'],
                         'sentences': current_sentences.copy()
                     }
                 
                 # 새 조항 시작
-                current_clause = clause_match.group(1)
+                clause_num = clause_match.group(1)
+                clause_content = clause_match.group(2)  # 괄호 내용
+                
+                # 제목 생성 (괄호 내용 포함)
+                if clause_content:
+                    title = f'제{clause_num}조 {clause_content}'
+                else:
+                    title = f'제{clause_num}조'
+                
+                current_clause = clause_num
                 current_sentences = []
                 
-                # 문장에서 "제n조" 제거하고 문장 추출
-                clean_text = re.sub(r'제\s*\d+\s*조\s*', '', sentence.text).strip()
+                # 제목을 저장 (나중에 사용하기 위해)
+                grouped[clause_num] = {
+                    'title': title,
+                    'sentences': []
+                }
+                
+                # 문장에서 "제n조 (내용)" 부분을 제거하고 실제 내용만 추출
+                clean_text = re.sub(r'제\s*\d+\s*조\s*\([^)]+\)\s*', '', sentence.text).strip()
+                
+                # 문장 시작의 불필요한 숫자 제거 (예: "1 근로시간은..." → "근로시간은...")
+                clean_text = re.sub(r'^\s*\d+\s*', '', clean_text).strip()
+                
                 if clean_text:
-                    current_sentences.append(Sentence(
+                    sentence_obj = Sentence(
                         id=sentence.id,
                         text=clean_text,
                         risk=sentence.risk,
                         why=sentence.why,
                         fix=sentence.fix
-                    ))
+                    )
+                    current_sentences.append(sentence_obj)
+                    grouped[clause_num]['sentences'].append(sentence_obj)
             else:
                 # 조항 내 문장들
                 if current_clause:
-                    current_sentences.append(sentence)
+                    clean_text = sentence.text.strip()
+                    
+                    # 문장 시작의 불필요한 숫자 제거 (예: "1 근로시간은..." → "근로시간은...")
+                    clean_text = re.sub(r'^\s*\d+\s*', '', clean_text).strip()
+                    
+                    if clean_text:
+                        sentence_obj = Sentence(
+                            id=sentence.id,
+                            text=clean_text,
+                            risk=sentence.risk,
+                            why=sentence.why,
+                            fix=sentence.fix
+                        )
+                        current_sentences.append(sentence_obj)
+                        grouped[current_clause]['sentences'].append(sentence_obj)
     
-    # 마지막 조항 저장
-    if current_clause and current_sentences:
-        grouped[current_clause] = {
-            'title': f'제{current_clause}조',
-            'sentences': current_sentences
-        }
+    # 마지막 조항은 이미 grouped에 저장되어 있음
+    # 추가 처리 불필요
     
     # Article 객체로 변환
     result = []
