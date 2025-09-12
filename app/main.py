@@ -33,7 +33,10 @@ app.add_middleware(
 
 # 라우터 포함
 from app.routers.upload.file_upload import router as file_upload_router
+from app.routers.chat.chat_router import router as chat_router
+
 app.include_router(file_upload_router)
+app.include_router(chat_router)
 
 # 기본 라우트
 @app.get("/")
