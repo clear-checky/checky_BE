@@ -60,16 +60,16 @@ def get_file_type(filename: str) -> FileType:
 
 
 async def save_uploaded_file(file: UploadFile) -> tuple[str, str]:
-    """업로드된 파일을 저장하고 file_id와 file_path 반환"""
-    file_id = str(uuid.uuid4())
+    """업로드된 파일을 저장하고 task_id와 file_path 반환"""
+    task_id = str(uuid.uuid4())
     file_ext = os.path.splitext(file.filename)[1].lower()
-    file_path = os.path.join(UPLOAD_DIR, f"{file_id}{file_ext}")
+    file_path = os.path.join(UPLOAD_DIR, f"{task_id}{file_ext}")
     
     async with aiofiles.open(file_path, "wb") as f:
         while content := await file.read(1024):
             await f.write(content)
     
-    return file_id, file_path
+    return task_id, file_path
 
 
 @router.post("/", response_model=FileUploadResponse)
@@ -85,7 +85,7 @@ async def upload_file(
             raise HTTPException(status_code=400, detail=error_message)
         
         # 파일 저장
-        file_id, file_path = await save_uploaded_file(file)
+        task_id, file_path = await save_uploaded_file(file)
         file_type = get_file_type(file.filename)
         file_size = os.path.getsize(file_path)
         
@@ -100,7 +100,7 @@ async def upload_file(
         return FileUploadResponse(
             success=True,
             message="파일이 성공적으로 업로드되었습니다.",
-            file_id=file_id,
+            task_id=task_id,
             file_name=file.filename,
             file_size=file_size,
             file_type=file_type,
@@ -113,15 +113,15 @@ async def upload_file(
         raise HTTPException(status_code=500, detail=f"파일 업로드 중 오류가 발생했습니다: {str(e)}")
 
 
-@router.get("/status/{file_id}", response_model=UploadStatusResponse)
-async def get_upload_status(file_id: str):
+@router.get("/status/{task_id}", response_model=UploadStatusResponse)
+async def get_upload_status(task_id: str):
     """업로드 상태 확인 (Mock 상태 전환)"""
     try:
         # 파일 존재 여부 확인
         file_exists = False
         file_path = None
         for filename in os.listdir(UPLOAD_DIR):
-            if filename.startswith(file_id):
+            if filename.startswith(task_id):
                 file_exists = True
                 file_path = os.path.join(UPLOAD_DIR, filename)
                 break
@@ -136,14 +136,14 @@ async def get_upload_status(file_id: str):
             raise HTTPException(status_code=410, detail="파일이 만료되어 삭제되었습니다. (24시간 TTL)")
         
         # Mock 상태 전환 로직
-        if file_id not in file_statuses:
-            file_statuses[file_id] = {
+        if task_id not in file_statuses:
+            file_statuses[task_id] = {
                 "status": "uploaded",
                 "created_at": time.time()
             }
         
         current_time = time.time()
-        created_at = file_statuses[file_id]["created_at"]
+        created_at = file_statuses[task_id]["created_at"]
         elapsed_time = current_time - created_at
         
         # 5초 후 processing, 10초 후 completed
@@ -157,10 +157,10 @@ async def get_upload_status(file_id: str):
             status = "completed"
             message = "분석이 완료되었습니다."
         
-        file_statuses[file_id]["status"] = status
+        file_statuses[task_id]["status"] = status
         
         return UploadStatusResponse(
-            file_id=file_id,
+            task_id=task_id,
             status=status,
             message=message
         )
@@ -171,15 +171,15 @@ async def get_upload_status(file_id: str):
         raise HTTPException(status_code=500, detail=f"상태 확인 중 오류가 발생했습니다: {str(e)}")
 
 
-@router.get("/analysis/{file_id}", response_model=AnalysisResult)
-async def get_analysis_result(file_id: str):
+@router.get("/analysis/{task_id}", response_model=AnalysisResult)
+async def get_analysis_result(task_id: str):
     """분석 결과 조회 (Mock 데이터)"""
     try:
         # 파일 존재 여부 확인
         file_exists = False
         file_path = None
         for filename in os.listdir(UPLOAD_DIR):
-            if filename.startswith(file_id):
+            if filename.startswith(task_id):
                 file_exists = True
                 file_path = os.path.join(UPLOAD_DIR, filename)
                 break
@@ -195,7 +195,7 @@ async def get_analysis_result(file_id: str):
         
         # Mock 분석 결과 데이터
         return AnalysisResult(
-            id=file_id,
+            id=task_id,
             title="계약서 분석 결과",
             articles=[
                 {
@@ -274,13 +274,13 @@ async def get_analysis_result(file_id: str):
         raise HTTPException(status_code=500, detail=f"분석 결과 조회 중 오류가 발생했습니다: {str(e)}")
 
 
-@router.delete("/{file_id}")
-async def delete_uploaded_file(file_id: str):
+@router.delete("/{task_id}")
+async def delete_uploaded_file(task_id: str):
     """업로드된 파일 삭제"""
     try:
         deleted = False
         for filename in os.listdir(UPLOAD_DIR):
-            if filename.startswith(file_id):
+            if filename.startswith(task_id):
                 file_path = os.path.join(UPLOAD_DIR, filename)
                 os.remove(file_path)
                 deleted = True
@@ -290,8 +290,8 @@ async def delete_uploaded_file(file_id: str):
             raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다.")
         
         # 상태 정보도 삭제
-        if file_id in file_statuses:
-            del file_statuses[file_id]
+        if task_id in file_statuses:
+            del file_statuses[task_id]
         
         return {"success": True, "message": "파일이 삭제되었습니다."}
         

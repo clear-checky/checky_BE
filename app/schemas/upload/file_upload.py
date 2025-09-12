@@ -21,7 +21,7 @@ class FileValidationError(str, Enum):
 class FileUploadResponse(BaseModel):
     success: bool
     message: str
-    file_id: str
+    task_id: str
     file_name: str
     file_size: int
     file_type: FileType
@@ -55,6 +55,6 @@ class AnalysisResult(BaseModel):
 
 
 class UploadStatusResponse(BaseModel):
-    file_id: str
+    task_id: str
     status: str
     message: str
