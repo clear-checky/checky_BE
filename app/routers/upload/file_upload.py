@@ -20,20 +20,35 @@ from app.services.file.file_cleaner import file_cleaner
 router = APIRouter(prefix="/upload", tags=["upload"])
 
 # 렌더 환경에 맞는 임시 디렉토리 사용
-UPLOAD_DIR = os.path.join(os.getcwd(), "files")
-MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB (프론트엔드와 동일)
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB로 줄임 (렌더 메모리 제한 고려)
 ALLOWED_EXTENSIONS = {'.pdf', '.docx', '.doc', '.txt', '.hwp', '.jpg', '.jpeg', '.png'}
 
-# 업로드 디렉토리 생성 (렌더 환경 고려)
-try:
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-    print(f"업로드 디렉토리 생성됨: {UPLOAD_DIR}")
-except Exception as e:
-    print(f"업로드 디렉토리 생성 실패: {e}")
-    # 대안으로 /tmp 디렉토리 사용
-    UPLOAD_DIR = "/tmp/files"
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-    print(f"대안 디렉토리 사용: {UPLOAD_DIR}")
+# 렌더 환경에서 사용 가능한 디렉토리 찾기
+UPLOAD_DIR = None
+possible_dirs = [
+    "/tmp",
+    "/tmp/files", 
+    os.path.join(os.getcwd(), "files"),
+    os.path.join(os.path.expanduser("~"), "files")
+]
+
+for dir_path in possible_dirs:
+    try:
+        os.makedirs(dir_path, exist_ok=True)
+        # 쓰기 권한 테스트
+        test_file = os.path.join(dir_path, "test_write.tmp")
+        with open(test_file, "w") as f:
+            f.write("test")
+        os.remove(test_file)
+        UPLOAD_DIR = dir_path
+        print(f"업로드 디렉토리 설정됨: {UPLOAD_DIR}")
+        break
+    except Exception as e:
+        print(f"디렉토리 {dir_path} 사용 불가: {e}")
+        continue
+
+if UPLOAD_DIR is None:
+    raise RuntimeError("사용 가능한 업로드 디렉토리를 찾을 수 없습니다.")
 
 # 파일별 상태 저장 (실제로는 DB 사용)
 file_statuses = {}
@@ -78,27 +93,21 @@ async def save_uploaded_file(file: UploadFile) -> tuple[str, str]:
     file_ext = os.path.splitext(file.filename)[1].lower()
     file_path = os.path.join(UPLOAD_DIR, f"{task_id}{file_ext}")
     
+    print(f"파일 저장 시도: {file_path}")
+    
+    # 파일 내용을 메모리에 먼저 읽기 (렌더 환경 고려)
+    file_content = await file.read()
+    print(f"파일 크기: {len(file_content)} bytes")
+    
     try:
-        print(f"파일 저장 시도: {file_path}")
-        async with aiofiles.open(file_path, "wb") as f:
-            while content := await file.read(1024):
-                await f.write(content)
+        # 동기 방식으로 파일 저장 (더 안정적)
+        with open(file_path, "wb") as f:
+            f.write(file_content)
         print(f"파일 저장 완료: {file_path}")
         return task_id, file_path
     except Exception as e:
         print(f"파일 저장 실패: {e}")
-        # 대안 경로로 재시도
-        alt_path = os.path.join("/tmp", f"{task_id}{file_ext}")
-        try:
-            async with aiofiles.open(alt_path, "wb") as f:
-                await file.seek(0)  # 파일 포인터 리셋
-                while content := await file.read(1024):
-                    await f.write(content)
-            print(f"대안 경로로 파일 저장 완료: {alt_path}")
-            return task_id, alt_path
-        except Exception as e2:
-            print(f"대안 경로 저장도 실패: {e2}")
-            raise HTTPException(status_code=500, detail=f"파일 저장 실패: {str(e2)}")
+        raise HTTPException(status_code=500, detail=f"파일 저장 실패: {str(e)}")
 
 
 @router.post("/", response_model=FileUploadResponse)
