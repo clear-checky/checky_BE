@@ -201,10 +201,22 @@ async def get_analysis_result(task_id: str):
         if task_id in analysis_results:
             return analysis_results[task_id]
         
+        # 파일명에서 확장자 제거하여 제목 생성
+        file_name = None
+        for filename in os.listdir(UPLOAD_DIR):
+            if filename.startswith(task_id):
+                file_name = filename
+                break
+        
+        if file_name:
+            title = os.path.splitext(file_name)[0]  # 확장자 제거
+        else:
+            title = "계약서 분석 결과"  # 기본값
+        
         # Mock 분석 결과 데이터
         return AnalysisResult(
             id=task_id,
-            title="계약서 분석 결과",
+            title=title,
             articles=[
                 {
                     "id": 1,
@@ -282,13 +294,19 @@ async def get_analysis_result(task_id: str):
         raise HTTPException(status_code=500, detail=f"분석 결과 조회 중 오류가 발생했습니다: {str(e)}")
 
 @router.post("/save-analysis/{task_id}")
-async def save_analysis_result(task_id: str, analysis_data: AnalyzeResponse):
+async def save_analysis_result(task_id: str, analysis_data: AnalyzeResponse, file_name: Optional[str] = None):
     """분석 결과 저장 (프론트엔드에서 호출)"""
     try:
+        # 파일명에서 확장자 제거하여 제목 생성
+        if file_name:
+            title = os.path.splitext(file_name)[0]  # 확장자 제거
+        else:
+            title = "계약서 분석 결과"  # 기본값
+        
         # 분석 결과를 저장
         analysis_results[task_id] = AnalysisResult(
             id=task_id,
-            title="계약서 분석 결과",
+            title=title,
             articles=analysis_data.articles
         )
         

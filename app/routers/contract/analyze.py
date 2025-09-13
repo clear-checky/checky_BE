@@ -7,6 +7,8 @@ from app.services.analyzer import (
     safety_percent,
 )
 import re
+import os
+from typing import Optional
 
 router = APIRouter(prefix="/contract", tags=["contract"])
 
@@ -72,6 +74,9 @@ def group_articles_by_clause(articles):
                 if current_clause:
                     clean_text = sentence.text.strip()
                     
+                    # 괄호 내용 뒤의 불필요한 숫자 제거 (예: "(근로시간 및 휴게시간) 1" → "(근로시간 및 휴게시간)")
+                    clean_text = re.sub(r'(\([^)]+\))\s*\d+\s*', r'\1', clean_text).strip()
+                    
                     # 문장 시작의 불필요한 숫자 제거 (예: "1 근로시간은..." → "근로시간은...")
                     clean_text = re.sub(r'^\s*\d+\s*', '', clean_text).strip()
                     
@@ -122,7 +127,7 @@ async def analyze_contract_debug(request: Request):
         return {"success": False, "error": f"JSON 파싱 실패: {str(e)}"}
 
 @router.post("/analyze", response_model=AnalyzeResponse, summary="계약서 문장 위험도 분석")
-async def analyze_contract(payload: AnalyzeRequest) -> AnalyzeResponse:
+async def analyze_contract(payload: AnalyzeRequest, file_name: Optional[str] = None) -> AnalyzeResponse:
     """
     프론트에서 보낸 계약서 조항/문장 배열을 분석하여
     각 문장의 risk/why/fix를 채워 반환합니다.
@@ -142,12 +147,21 @@ async def analyze_contract(payload: AnalyzeRequest) -> AnalyzeResponse:
         counts = compute_counts(articles)
         sp = safety_percent(counts)
 
-        # 4) 응답
-        return AnalyzeResponse(
+        # 4) 응답 (파일명 정보 포함)
+        response = AnalyzeResponse(
             articles=articles,
             counts=counts,
             safety_percent=sp,
         )
+        
+        # 파일명이 있으면 로그에 출력 (디버깅용)
+        if file_name:
+            print(f"분석된 파일명: {file_name}")
+            # 파일명에서 확장자 제거
+            clean_filename = os.path.splitext(file_name)[0]
+            print(f"제목으로 사용될 이름: {clean_filename}")
+        
+        return response
     except HTTPException:
         # FastAPI용 예외는 그대로 전달
         raise
