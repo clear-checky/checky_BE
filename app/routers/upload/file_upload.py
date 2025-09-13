@@ -19,12 +19,21 @@ from app.services.file.file_cleaner import file_cleaner
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
-UPLOAD_DIR = "files"
+# 렌더 환경에 맞는 임시 디렉토리 사용
+UPLOAD_DIR = os.path.join(os.getcwd(), "files")
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB (프론트엔드와 동일)
 ALLOWED_EXTENSIONS = {'.pdf', '.docx', '.doc', '.txt', '.hwp', '.jpg', '.jpeg', '.png'}
 
-# 업로드 디렉토리 생성
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+# 업로드 디렉토리 생성 (렌더 환경 고려)
+try:
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    print(f"업로드 디렉토리 생성됨: {UPLOAD_DIR}")
+except Exception as e:
+    print(f"업로드 디렉토리 생성 실패: {e}")
+    # 대안으로 /tmp 디렉토리 사용
+    UPLOAD_DIR = "/tmp/files"
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    print(f"대안 디렉토리 사용: {UPLOAD_DIR}")
 
 # 파일별 상태 저장 (실제로는 DB 사용)
 file_statuses = {}
@@ -69,11 +78,27 @@ async def save_uploaded_file(file: UploadFile) -> tuple[str, str]:
     file_ext = os.path.splitext(file.filename)[1].lower()
     file_path = os.path.join(UPLOAD_DIR, f"{task_id}{file_ext}")
     
-    async with aiofiles.open(file_path, "wb") as f:
-        while content := await file.read(1024):
-            await f.write(content)
-    
-    return task_id, file_path
+    try:
+        print(f"파일 저장 시도: {file_path}")
+        async with aiofiles.open(file_path, "wb") as f:
+            while content := await file.read(1024):
+                await f.write(content)
+        print(f"파일 저장 완료: {file_path}")
+        return task_id, file_path
+    except Exception as e:
+        print(f"파일 저장 실패: {e}")
+        # 대안 경로로 재시도
+        alt_path = os.path.join("/tmp", f"{task_id}{file_ext}")
+        try:
+            async with aiofiles.open(alt_path, "wb") as f:
+                await file.seek(0)  # 파일 포인터 리셋
+                while content := await file.read(1024):
+                    await f.write(content)
+            print(f"대안 경로로 파일 저장 완료: {alt_path}")
+            return task_id, alt_path
+        except Exception as e2:
+            print(f"대안 경로 저장도 실패: {e2}")
+            raise HTTPException(status_code=500, detail=f"파일 저장 실패: {str(e2)}")
 
 
 @router.post("/", response_model=FileUploadResponse)
@@ -83,15 +108,22 @@ async def upload_file(
 ):
     """파일 업로드 및 텍스트 추출"""
     try:
+        print(f"파일 업로드 시작: {file.filename}, 크기: {file.size}")
+        
         # 파일 유효성 검사
         is_valid, error_message = validate_file(file)
         if not is_valid:
+            print(f"파일 유효성 검사 실패: {error_message}")
             raise HTTPException(status_code=400, detail=error_message)
+        
+        print("파일 유효성 검사 통과")
         
         # 파일 저장
         task_id, file_path = await save_uploaded_file(file)
         file_type = get_file_type(file.filename)
         file_size = os.path.getsize(file_path)
+        
+        print(f"파일 저장 완료 - task_id: {task_id}, file_path: {file_path}, file_type: {file_type}")
         
         # 텍스트 추출
         extracted_text = None
