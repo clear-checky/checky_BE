@@ -1,235 +1,301 @@
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.exceptions import RequestValidationError
-from app.schemas.contract.types import AnalyzeRequest, AnalyzeResponse
-from app.services.analyzer import (
-    classify_articles,
-    compute_counts,
-    safety_percent,
-)
-import re
+from fastapi import APIRouter, UploadFile, File, HTTPException
 import os
+import uuid
+import time
 from typing import Optional
+import aiofiles
+import mimetypes
+from datetime import datetime
+from app.schemas.upload.file_upload import (
+    FileUploadResponse,
+    FileValidationError,
+    FileType,
+    UploadStatusResponse,
+    AnalysisResult
+)
+from app.services.file.text_extractor import text_extractor
+from app.services.file.file_cleaner import file_cleaner
 
-router = APIRouter(prefix="/contract", tags=["contract"])
+router = APIRouter(prefix="/upload", tags=["upload"])
 
-def extract_document_title(articles):
-    """AI가 문서 내용에서 제목을 추출하는 함수"""
-    if not articles or not articles[0].sentences:
-        return "계약서 분석 결과"
-    
-    # 첫 번째 문장에서 제목 추출 시도
-    first_sentence = articles[0].sentences[0].text
-    
-    # "근로계약서", "임대차계약서", "매매계약서" 등 패턴 찾기
-    title_patterns = [
-        r'([가-힣]+계약서)',
-        r'([가-힣]+근로계약서)',
-        r'([가-힣]+임대차계약서)',
-        r'([가-힣]+매매계약서)',
-        r'([가-힣]+도급계약서)',
-        r'([가-힣]+용역계약서)',
-    ]
-    
-    for pattern in title_patterns:
-        match = re.search(pattern, first_sentence)
-        if match:
-            return match.group(1)
-    
-    # 패턴이 없으면 기본값
-    return "계약서 분석 결과"
+UPLOAD_DIR = "files"
+MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB (프론트엔드와 동일)
+ALLOWED_EXTENSIONS = {'.pdf', '.docx', '.doc', '.txt', '.hwp', '.jpg', '.jpeg', '.png'}
 
-def is_non_article_sentence(text):
-    """조항이 아닌 문장인지 판단하는 함수"""
-    non_article_patterns = [
-        r'본 계약의 효력을 증명하기 위하여',
-        r'계약 당사자가 서명 또는 날인한다',
-        r'\d{4}년 \d{1,2}월 \d{1,2}일',
-        r'사용자\(대표자\)',
-        r'근로자:',
-        r'임대인:',
-        r'임차인:',
-        r'매도인:',
-        r'매수인:',
-    ]
-    
-    for pattern in non_article_patterns:
-        if re.search(pattern, text):
-            return True
-    return False
+# 업로드 디렉토리 생성
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-def group_articles_by_clause(articles):
-    """조항별로 그룹화하는 함수 - 문장 안에서 '제N조' 패턴 찾기"""
-    from app.schemas.contract.types import Article, Sentence
-    
-    grouped = {}
-    current_clause = None
-    current_sentences = []
-    non_article_sentences = []  # 조항이 아닌 문장들
-    
-    for article in articles:
-        for sentence in article.sentences:
-            # 조항이 아닌 문장인지 먼저 확인
-            if is_non_article_sentence(sentence.text):
-                # 조항이 아닌 문장은 별도로 저장 (숫자 제거하지 않음)
-                non_article_sentences.append(sentence)
-                continue
-            
-            # 문장 안에서 "제n조 (내용)" 패턴 찾기
-            clause_match = re.search(r'제\s*(\d+)\s*조\s*(\([^)]+\))?', sentence.text)
-            
-            if clause_match:
-                # 새로운 조항이 시작됨
-                if current_clause and current_sentences:
-                    # 이전 조항 저장 (제목은 이미 생성됨)
-                    grouped[current_clause] = {
-                        'title': grouped[current_clause]['title'],
-                        'sentences': current_sentences.copy()
-                    }
-                
-                # 새 조항 시작
-                clause_num = clause_match.group(1)
-                clause_content = clause_match.group(2)  # 괄호 내용
-                
-                # 제목 생성 (괄호 내용 포함)
-                if clause_content:
-                    title = f'제{clause_num}조 {clause_content}'
-                else:
-                    title = f'제{clause_num}조'
-                
-                current_clause = clause_num
-                current_sentences = []
-                
-                # 제목을 저장 (나중에 사용하기 위해)
-                grouped[clause_num] = {
-                    'title': title,
-                    'sentences': []
-                }
-                
-                # 문장에서 "제n조 (내용)" 부분을 제거하고 실제 내용만 추출
-                clean_text = re.sub(r'제\s*\d+\s*조\s*\([^)]+\)\s*', '', sentence.text).strip()
-                
-                # 문장 시작의 불필요한 숫자 제거 (예: "1 근로시간은..." → "근로시간은...")
-                clean_text = re.sub(r'^\s*\d+\s*', '', clean_text).strip()
-                
-                if clean_text:
-                    sentence_obj = Sentence(
-                        id=sentence.id,
-                        text=clean_text,
-                        risk=sentence.risk,
-                        why=sentence.why,
-                        fix=sentence.fix
-                    )
-                    current_sentences.append(sentence_obj)
-                    grouped[clause_num]['sentences'].append(sentence_obj)
-            else:
-                # 조항 내 문장들
-                if current_clause:
-                    clean_text = sentence.text.strip()
-                    
-                    # 괄호 내용 뒤의 불필요한 숫자 제거 (예: "(근로시간 및 휴게시간) 1" → "(근로시간 및 휴게시간)")
-                    clean_text = re.sub(r'(\([^)]+\))\s*\d+\s*', r'\1', clean_text).strip()
-                    
-                    # 문장 시작의 불필요한 숫자 제거 (예: "1 근로시간은..." → "근로시간은...")
-                    clean_text = re.sub(r'^\s*\d+\s*', '', clean_text).strip()
-                    
-                    if clean_text:
-                        sentence_obj = Sentence(
-                            id=sentence.id,
-                            text=clean_text,
-                            risk=sentence.risk,
-                            why=sentence.why,
-                            fix=sentence.fix
-                        )
-                        current_sentences.append(sentence_obj)
-                        grouped[current_clause]['sentences'].append(sentence_obj)
-    
-    # 마지막 조항은 이미 grouped에 저장되어 있음
-    # 추가 처리 불필요
-    
-    # Article 객체로 변환
-    result = []
-    for clause_num, data in grouped.items():
-        result.append(Article(
-            id=int(clause_num),
-            title=data['title'],
-            sentences=data['sentences']
-        ))
-    
-    # 조항이 아닌 문장들을 별도 Article로 추가
-    if non_article_sentences:
-        result.append(Article(
-            id="non_article",
-            title="기타 사항",
-            sentences=non_article_sentences
-        ))
-    
-    return result
+# 파일별 상태 저장 (실제로는 DB 사용)
+file_statuses = {}
 
-@router.post("/analyze-debug")
-async def analyze_contract_debug(request: Request):
-    """디버깅용 엔드포인트 - 원시 데이터 확인"""
+
+def validate_file(file: UploadFile) -> tuple[bool, Optional[str]]:
+    """파일 유효성 검사"""
+    if file.size and file.size > MAX_FILE_SIZE:
+        return False, f"파일 크기가 너무 큽니다. 최대 {MAX_FILE_SIZE // (1024*1024)}MB까지 허용됩니다."
+    
+    if file.filename:
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext not in ALLOWED_EXTENSIONS:
+            return False, f"지원하지 않는 파일 형식입니다. 허용된 형식: {', '.join(ALLOWED_EXTENSIONS)}"
+    
+    return True, None
+
+
+def get_file_type(filename: str) -> FileType:
+    """파일명으로부터 파일 타입 결정"""
+    ext = os.path.splitext(filename)[1].lower()
+    if ext == '.pdf':
+        return FileType.PDF
+    elif ext in ['.doc', '.docx']:
+        return FileType.DOCX
+    elif ext == '.txt':
+        return FileType.TXT
+    elif ext == '.hwp':
+        return FileType.HWP
+    elif ext in ['.jpg', '.jpeg', '.png']:
+        return FileType.IMAGE
+    else:
+        return FileType.UNKNOWN
+
+
+async def save_uploaded_file(file: UploadFile) -> tuple[str, str]:
+    """업로드된 파일을 저장하고 file_id와 file_path 반환"""
+    file_id = str(uuid.uuid4())
+    file_ext = os.path.splitext(file.filename)[1].lower()
+    file_path = os.path.join(UPLOAD_DIR, f"{file_id}{file_ext}")
+    
+    async with aiofiles.open(file_path, "wb") as f:
+        while content := await file.read(1024):
+            await f.write(content)
+    
+    return file_id, file_path
+
+
+@router.post("/", response_model=FileUploadResponse)
+async def upload_file(
+    file: UploadFile = File(..., description="업로드할 파일"),
+    description: Optional[str] = None
+):
+    """파일 업로드 및 텍스트 추출"""
     try:
-        body = await request.json()
-        print(f"받은 원시 데이터: {body}")
-        print(f"데이터 타입: {type(body)}")
+        # 파일 유효성 검사
+        is_valid, error_message = validate_file(file)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=error_message)
         
-        # 스키마 검증 시도
+        # 파일 저장
+        file_id, file_path = await save_uploaded_file(file)
+        file_type = get_file_type(file.filename)
+        file_size = os.path.getsize(file_path)
+        
+        # 텍스트 추출
+        extracted_text = None
         try:
-            payload = AnalyzeRequest(**body)
-            print(f"스키마 검증 성공: {payload}")
-            return {"success": True, "message": "데이터 형식이 올바릅니다."}
+            extracted_text = await text_extractor.extract_text(file_path, file_type)
         except Exception as e:
-            print(f"스키마 검증 실패: {str(e)}")
-            return {"success": False, "error": str(e), "received_data": body}
-            
-    except Exception as e:
-        print(f"JSON 파싱 실패: {str(e)}")
-        return {"success": False, "error": f"JSON 파싱 실패: {str(e)}"}
-
-@router.post("/analyze", response_model=AnalyzeResponse, summary="계약서 문장 위험도 분석")
-async def analyze_contract(payload: AnalyzeRequest, file_name: Optional[str] = None) -> AnalyzeResponse:
-    """
-    프론트에서 보낸 계약서 조항/문장 배열을 분석하여
-    각 문장의 risk/why/fix를 채워 반환합니다.
-    """
-    try:
-        print(f"받은 데이터: {payload}")
-        print(f"articles 개수: {len(payload.articles)}")
+            print(f"텍스트 추출 실패: {str(e)}")
+            # 텍스트 추출 실패해도 업로드는 성공으로 처리
         
-        # 1) 조항별로 그룹화
-        grouped_articles = group_articles_by_clause(payload.articles)
-        print(f"그룹화된 조항 개수: {len(grouped_articles)}")
-        
-        # 2) 문장 분석 (OpenAI 연동 또는 mock/fallback)
-        articles = await classify_articles(grouped_articles)
-
-        # 3) 카운트/안전지수 계산
-        counts = compute_counts(articles)
-        sp = safety_percent(counts)
-
-        # 4) 응답 (파일명 정보 포함)
-        response = AnalyzeResponse(
-            articles=articles,
-            counts=counts,
-            safety_percent=sp,
+        return FileUploadResponse(
+            success=True,
+            message="파일이 성공적으로 업로드되었습니다.",
+            file_id=file_id,
+            file_name=file.filename,
+            file_size=file_size,
+            file_type=file_type,
+            extracted_text=extracted_text
         )
         
-        # AI가 문서 내용에서 제목 추출
-        document_title = extract_document_title(payload.articles)
-        print(f"AI가 추출한 문서 제목: {document_title}")
-        
-        # 파일명이 있으면 로그에 출력 (디버깅용)
-        if file_name:
-            print(f"원본 파일명: {file_name}")
-            clean_filename = os.path.splitext(file_name)[0]
-            print(f"파일명 기반 제목: {clean_filename}")
-        print(f"최종 사용할 제목: {document_title}")
-        
-        return response
     except HTTPException:
-        # FastAPI용 예외는 그대로 전달
         raise
     except Exception as e:
-        # 예기치 못한 에러는 500으로 래핑 (로그는 서버 콘솔에서 확인)
-        print(f"에러 발생: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Analyze failed: {type(e).__name__}")
+        raise HTTPException(status_code=500, detail=f"파일 업로드 중 오류가 발생했습니다: {str(e)}")
+
+
+@router.get("/status/{file_id}", response_model=UploadStatusResponse)
+async def get_upload_status(file_id: str):
+    """업로드 상태 확인 (Mock 상태 전환)"""
+    try:
+        # 파일 존재 여부 확인
+        file_exists = False
+        file_path = None
+        for filename in os.listdir(UPLOAD_DIR):
+            if filename.startswith(file_id):
+                file_exists = True
+                file_path = os.path.join(UPLOAD_DIR, filename)
+                break
+        
+        if not file_exists:
+            raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다.")
+        
+        # 파일 만료 확인
+        if file_path and file_cleaner.is_file_expired(file_path):
+            # 만료된 파일 삭제
+            await file_cleaner.clean_file_now(file_path)
+            raise HTTPException(status_code=410, detail="파일이 만료되어 삭제되었습니다. (24시간 TTL)")
+        
+        # Mock 상태 전환 로직
+        if file_id not in file_statuses:
+            file_statuses[file_id] = {
+                "status": "uploaded",
+                "created_at": time.time()
+            }
+        
+        current_time = time.time()
+        created_at = file_statuses[file_id]["created_at"]
+        elapsed_time = current_time - created_at
+        
+        # 5초 후 processing, 10초 후 completed
+        if elapsed_time < 5:
+            status = "uploaded"
+            message = "파일이 업로드되었습니다."
+        elif elapsed_time < 10:
+            status = "processing"
+            message = "분석 중입니다..."
+        else:
+            status = "completed"
+            message = "분석이 완료되었습니다."
+        
+        file_statuses[file_id]["status"] = status
+        
+        return UploadStatusResponse(
+            file_id=file_id,
+            status=status,
+            message=message
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"상태 확인 중 오류가 발생했습니다: {str(e)}")
+
+
+@router.get("/analysis/{file_id}", response_model=AnalysisResult)
+async def get_analysis_result(file_id: str):
+    """분석 결과 조회 (Mock 데이터)"""
+    try:
+        # 파일 존재 여부 확인
+        file_exists = False
+        file_path = None
+        for filename in os.listdir(UPLOAD_DIR):
+            if filename.startswith(file_id):
+                file_exists = True
+                file_path = os.path.join(UPLOAD_DIR, filename)
+                break
+        
+        if not file_exists:
+            raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다.")
+        
+        # 파일 만료 확인
+        if file_path and file_cleaner.is_file_expired(file_path):
+            # 만료된 파일 삭제
+            await file_cleaner.clean_file_now(file_path)
+            raise HTTPException(status_code=410, detail="파일이 만료되어 삭제되었습니다. (24시간 TTL)")
+        
+        # Mock 분석 결과 데이터
+        return AnalysisResult(
+            id=file_id,
+            title="계약서 분석 결과",
+            articles=[
+                {
+                    "id": 1,
+                    "title": "제1조 (근로계약 기간)",
+                    "sentences": [
+                        {
+                            "id": "s1-1",
+                            "text": "근로계약 기간은 2025년 1월 1일부터 2025년 12월 31일까지로 한다.",
+                            "risk": "safe",
+                            "why": "표준 계약 조건을 따르고 있습니다.",
+                            "fix": "추가 조치 불필요"
+                        },
+                        {
+                            "id": "s1-2",
+                            "text": "계약 기간 만료 후 상호 협의에 따라 갱신할 수 있다.",
+                            "risk": "safe",
+                            "why": "갱신 조건이 명확하게 명시되어 있습니다.",
+                            "fix": "추가 조치 불필요"
+                        }
+                    ]
+                },
+                {
+                    "id": 2,
+                    "title": "제2조 (근무 장소 및 업무)",
+                    "sentences": [
+                        {
+                            "id": "s2-1",
+                            "text": "근무 장소는 회사가 정한 사업장으로 한다.",
+                            "risk": "safe",
+                            "why": "근무 장소가 명확하게 지정되어 있습니다.",
+                            "fix": "추가 조치 불필요"
+                        },
+                        {
+                            "id": "s2-2",
+                            "text": "근로자의 주요 업무는 고객 응대 및 매장 관리로 한다.",
+                            "risk": "safe",
+                            "why": "업무 내용이 구체적으로 명시되어 있습니다.",
+                            "fix": "추가 조치 불필요"
+                        }
+                    ]
+                },
+                {
+                    "id": 3,
+                    "title": "제3조 (근로시간 및 휴게)",
+                    "sentences": [
+                        {
+                            "id": "s3-1",
+                            "text": "근로시간은 1일 8시간, 주 40시간을 원칙으로 한다.",
+                            "risk": "safe",
+                            "why": "법정 근로시간을 준수하고 있습니다.",
+                            "fix": "추가 조치 불필요"
+                        },
+                        {
+                            "id": "s3-2",
+                            "text": "근로자는 근로시간 중 1시간의 휴게시간을 가진다.",
+                            "risk": "safe",
+                            "why": "휴게시간이 적절하게 보장되고 있습니다.",
+                            "fix": "추가 조치 불필요"
+                        },
+                        {
+                            "id": "s3-3",
+                            "text": "휴게시간 중에도 상급자 지시에 즉시 응해야 하며, 이 시간은 근로시간으로 보지 않는다.",
+                            "risk": "danger",
+                            "why": "대기·콜 대기 등 사용자의 지휘감독 하에 있으면 실질적 휴게가 아니며 근로시간으로 볼 여지 큼.",
+                            "fix": "휴게시간 동안 지휘감독을 배제하여 자유로운 이용을 보장하고, 불가피한 대기·지시가 있는 경우 해당 시간은 근로시간으로 본다."
+                        }
+                    ]
+                }
+            ]
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"분석 결과 조회 중 오류가 발생했습니다: {str(e)}")
+
+
+@router.delete("/{file_id}")
+async def delete_uploaded_file(file_id: str):
+    """업로드된 파일 삭제"""
+    try:
+        deleted = False
+        for filename in os.listdir(UPLOAD_DIR):
+            if filename.startswith(file_id):
+                file_path = os.path.join(UPLOAD_DIR, filename)
+                os.remove(file_path)
+                deleted = True
+                break
+        
+        if not deleted:
+            raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다.")
+        
+        # 상태 정보도 삭제
+        if file_id in file_statuses:
+            del file_statuses[file_id]
+        
+        return {"success": True, "message": "파일이 삭제되었습니다."}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"파일 삭제 중 오류가 발생했습니다: {str(e)}")
