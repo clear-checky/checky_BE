@@ -19,10 +19,10 @@ httpx==0.25.2
 Pillow==10.4.0
 aiofiles==23.2.1
 
-# OCR 라이브러리
+# OCR 라이브러리 (렌더 최적화)
 google-cloud-vision==3.10.2
-# easyocr==1.7.0  # 렌더 배포 시 메모리 부족으로 인해 주석 처리
 pytesseract==0.3.10
+# easyocr는 메모리 부족으로 제외
 
 # 문서 처리
 pypdf==4.0.1

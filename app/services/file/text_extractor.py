@@ -153,7 +153,18 @@ class TextExtractor:
             except Exception as e:
                 return f"EasyOCR 실패: {str(e)}"
         
-        return "EasyOCR이 설치되지 않았습니다."
+        # EasyOCR이 없을 때는 pytesseract 사용 시도
+        try:
+            import pytesseract
+            from PIL import Image
+            
+            image = Image.open(file_path)
+            text = pytesseract.image_to_string(image, lang='kor+eng')
+            return text.strip()
+        except ImportError:
+            return "OCR 라이브러리가 설치되지 않았습니다. (EasyOCR 또는 pytesseract 필요)"
+        except Exception as e:
+            return f"OCR 실패: {str(e)}"
 
     async def _extract_from_hwp(self, file_path: str) -> Optional[str]:
         """HWP 파일에서 텍스트를 추출합니다."""
