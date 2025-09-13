@@ -201,17 +201,9 @@ async def get_analysis_result(task_id: str):
         if task_id in analysis_results:
             return analysis_results[task_id]
         
-        # 파일명에서 확장자 제거하여 제목 생성
-        file_name = None
-        for filename in os.listdir(UPLOAD_DIR):
-            if filename.startswith(task_id):
-                file_name = filename
-                break
-        
-        if file_name:
-            title = os.path.splitext(file_name)[0]  # 확장자 제거
-        else:
-            title = "계약서 분석 결과"  # 기본값
+        # AI가 추출한 제목 사용 (실제로는 analyze_contract에서 처리됨)
+        # 여기서는 기본값만 사용
+        title = "계약서 분석 결과"
         
         # Mock 분석 결과 데이터
         return AnalysisResult(
@@ -297,11 +289,9 @@ async def get_analysis_result(task_id: str):
 async def save_analysis_result(task_id: str, analysis_data: AnalyzeResponse, file_name: Optional[str] = None):
     """분석 결과 저장 (프론트엔드에서 호출)"""
     try:
-        # 파일명에서 확장자 제거하여 제목 생성
-        if file_name:
-            title = os.path.splitext(file_name)[0]  # 확장자 제거
-        else:
-            title = "계약서 분석 결과"  # 기본값
+        # AI가 추출한 제목 사용 (analyze_contract에서 이미 처리됨)
+        # 여기서는 기본값만 사용
+        title = "계약서 분석 결과"
         
         # 분석 결과를 저장
         analysis_results[task_id] = AnalysisResult(

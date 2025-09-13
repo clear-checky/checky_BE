@@ -12,6 +12,51 @@ from typing import Optional
 
 router = APIRouter(prefix="/contract", tags=["contract"])
 
+def extract_document_title(articles):
+    """AI가 문서 내용에서 제목을 추출하는 함수"""
+    if not articles or not articles[0].sentences:
+        return "계약서 분석 결과"
+    
+    # 첫 번째 문장에서 제목 추출 시도
+    first_sentence = articles[0].sentences[0].text
+    
+    # "근로계약서", "임대차계약서", "매매계약서" 등 패턴 찾기
+    title_patterns = [
+        r'([가-힣]+계약서)',
+        r'([가-힣]+근로계약서)',
+        r'([가-힣]+임대차계약서)',
+        r'([가-힣]+매매계약서)',
+        r'([가-힣]+도급계약서)',
+        r'([가-힣]+용역계약서)',
+    ]
+    
+    for pattern in title_patterns:
+        match = re.search(pattern, first_sentence)
+        if match:
+            return match.group(1)
+    
+    # 패턴이 없으면 기본값
+    return "계약서 분석 결과"
+
+def is_non_article_sentence(text):
+    """조항이 아닌 문장인지 판단하는 함수"""
+    non_article_patterns = [
+        r'본 계약의 효력을 증명하기 위하여',
+        r'계약 당사자가 서명 또는 날인한다',
+        r'\d{4}년 \d{1,2}월 \d{1,2}일',
+        r'사용자\(대표자\)',
+        r'근로자:',
+        r'임대인:',
+        r'임차인:',
+        r'매도인:',
+        r'매수인:',
+    ]
+    
+    for pattern in non_article_patterns:
+        if re.search(pattern, text):
+            return True
+    return False
+
 def group_articles_by_clause(articles):
     """조항별로 그룹화하는 함수 - 문장 안에서 '제N조' 패턴 찾기"""
     from app.schemas.contract.types import Article, Sentence
@@ -19,9 +64,16 @@ def group_articles_by_clause(articles):
     grouped = {}
     current_clause = None
     current_sentences = []
+    non_article_sentences = []  # 조항이 아닌 문장들
     
     for article in articles:
         for sentence in article.sentences:
+            # 조항이 아닌 문장인지 먼저 확인
+            if is_non_article_sentence(sentence.text):
+                # 조항이 아닌 문장은 별도로 저장 (숫자 제거하지 않음)
+                non_article_sentences.append(sentence)
+                continue
+            
             # 문장 안에서 "제n조 (내용)" 패턴 찾기
             clause_match = re.search(r'제\s*(\d+)\s*조\s*(\([^)]+\))?', sentence.text)
             
@@ -103,6 +155,14 @@ def group_articles_by_clause(articles):
             sentences=data['sentences']
         ))
     
+    # 조항이 아닌 문장들을 별도 Article로 추가
+    if non_article_sentences:
+        result.append(Article(
+            id="non_article",
+            title="기타 사항",
+            sentences=non_article_sentences
+        ))
+    
     return result
 
 @router.post("/analyze-debug")
@@ -154,12 +214,16 @@ async def analyze_contract(payload: AnalyzeRequest, file_name: Optional[str] = N
             safety_percent=sp,
         )
         
+        # AI가 문서 내용에서 제목 추출
+        document_title = extract_document_title(payload.articles)
+        print(f"AI가 추출한 문서 제목: {document_title}")
+        
         # 파일명이 있으면 로그에 출력 (디버깅용)
         if file_name:
-            print(f"분석된 파일명: {file_name}")
-            # 파일명에서 확장자 제거
+            print(f"원본 파일명: {file_name}")
             clean_filename = os.path.splitext(file_name)[0]
-            print(f"제목으로 사용될 이름: {clean_filename}")
+            print(f"파일명 기반 제목: {clean_filename}")
+        print(f"최종 사용할 제목: {document_title}")
         
         return response
     except HTTPException:
