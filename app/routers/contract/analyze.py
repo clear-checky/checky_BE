@@ -19,15 +19,18 @@ def extract_document_title(articles):
     
     # 첫 번째 문장에서 제목 추출 시도
     first_sentence = articles[0].sentences[0].text
+    print(f"첫 번째 문장에서 제목 추출 시도: {first_sentence}")
     
     # "근로계약서", "임대차계약서", "매매계약서" 등 패턴 찾기
     title_patterns = [
-        r'([가-힣]+계약서)',
-        r'([가-힣]+근로계약서)',
-        r'([가-힣]+임대차계약서)',
-        r'([가-힣]+매매계약서)',
-        r'([가-힣]+도급계약서)',
-        r'([가-힣]+용역계약서)',
+        r'([가-힣\s]+계약서)',
+        r'([가-힣\s]+근로계약서)',
+        r'([가-힣\s]+임대차계약서)',
+        r'([가-힣\s]+매매계약서)',
+        r'([가-힣\s]+도급계약서)',
+        r'([가-힣\s]+용역계약서)',
+        r'([가-힣\s]+주택\s*임대차\s*계약서)',
+        r'([가-힣\s]+부동산\s*임대차\s*계약서)',
     ]
     
     for pattern in title_patterns:
@@ -207,13 +210,6 @@ async def analyze_contract(payload: AnalyzeRequest, file_name: Optional[str] = N
         counts = compute_counts(articles)
         sp = safety_percent(counts)
 
-        # 4) 응답 (파일명 정보 포함)
-        response = AnalyzeResponse(
-            articles=articles,
-            counts=counts,
-            safety_percent=sp,
-        )
-        
         # AI가 문서 내용에서 제목 추출
         document_title = extract_document_title(payload.articles)
         print(f"AI가 추출한 문서 제목: {document_title}")
@@ -224,6 +220,14 @@ async def analyze_contract(payload: AnalyzeRequest, file_name: Optional[str] = N
             clean_filename = os.path.splitext(file_name)[0]
             print(f"파일명 기반 제목: {clean_filename}")
         print(f"최종 사용할 제목: {document_title}")
+        
+        # 4) 응답 (AI 추출 제목 포함)
+        response = AnalyzeResponse(
+            articles=articles,
+            counts=counts,
+            safety_percent=sp,
+            title=document_title,  # AI가 추출한 제목 포함
+        )
         
         return response
     except HTTPException:
