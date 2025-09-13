@@ -22,3 +22,4 @@ class AnalyzeResponse(BaseModel):
     articles: List[Article]
     counts: dict                  # {"danger":..,"warning":..,"safe":..,"total":..}
     safety_percent: float         # 예: 87.5 (0.1% 단위 반올림)
+    title: str                    # AI가 추출한 문서 제목

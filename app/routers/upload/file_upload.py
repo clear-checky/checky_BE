@@ -201,10 +201,14 @@ async def get_analysis_result(task_id: str):
         if task_id in analysis_results:
             return analysis_results[task_id]
         
+        # AI가 추출한 제목 사용 (실제로는 analyze_contract에서 처리됨)
+        # 여기서는 기본값만 사용
+        title = "계약서 분석 결과"
+        
         # Mock 분석 결과 데이터
         return AnalysisResult(
             id=task_id,
-            title="계약서 분석 결과",
+            title=title,
             articles=[
                 {
                     "id": 1,
@@ -282,13 +286,17 @@ async def get_analysis_result(task_id: str):
         raise HTTPException(status_code=500, detail=f"분석 결과 조회 중 오류가 발생했습니다: {str(e)}")
 
 @router.post("/save-analysis/{task_id}")
-async def save_analysis_result(task_id: str, analysis_data: AnalyzeResponse):
+async def save_analysis_result(task_id: str, analysis_data: AnalyzeResponse, file_name: Optional[str] = None):
     """분석 결과 저장 (프론트엔드에서 호출)"""
     try:
+        # AI가 추출한 제목 사용 (analyze_contract에서 이미 처리됨)
+        # 여기서는 기본값만 사용
+        title = "계약서 분석 결과"
+        
         # 분석 결과를 저장
         analysis_results[task_id] = AnalysisResult(
             id=task_id,
-            title="계약서 분석 결과",
+            title=title,
             articles=analysis_data.articles
         )
         
