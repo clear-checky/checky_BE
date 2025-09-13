@@ -9,7 +9,16 @@ class ChatService:
     def __init__(self):
         self.system_prompt = """당신은 친근하고 도움이 되는 AI 어시스턴트입니다. 
         사용자의 질문에 대해 정확하고 유용한 답변을 제공해주세요. 
-        한국어로 대화하며, 친근하고 자연스러운 톤을 유지해주세요."""
+        한국어로 대화하며, 친근하고 자연스러운 톤을 유지해주세요.
+        
+        답변할 때는 마크다운 형식을 적극적으로 활용해주세요:
+        - **굵은 글씨**는 **로 감싸서 강조
+        - *기울임체*는 *로 감싸서 표현
+        - `코드`는 `로 감싸서 표현
+        - # 제목은 #으로 표현
+        - - 목록은 -로 표현
+        - 1. 번호 목록은 숫자로 표현
+        """
     
     async def get_chat_response(self, user_message: str, conversation_history: List[ChatMessage] = None) -> str:
         """
