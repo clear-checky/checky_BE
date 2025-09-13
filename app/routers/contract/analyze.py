@@ -43,10 +43,14 @@ def extract_document_title(articles):
 
 def is_non_article_sentence(text):
     """조항이 아닌 문장인지 판단하는 함수"""
+    # 먼저 조항인지 확인 (제N조 패턴이 있으면 조항으로 간주)
+    if re.search(r'제\s*(\d+)\s*조', text):
+        return False
+    
     non_article_patterns = [
         r'본 계약의 효력을 증명하기 위하여',
         r'계약 당사자가 서명 또는 날인한다',
-        r'\d{4}년 \d{1,2}월 \d{1,2}일',
+        r'^\d{4}년 \d{1,2}월 \d{1,2}일',  # 문장 시작에 날짜만 있는 경우
         r'사용자\(대표자\)',
         r'근로자:',
         r'임대인:',
@@ -60,6 +64,25 @@ def is_non_article_sentence(text):
             return True
     return False
 
+def is_preamble_sentence(text):
+    """서문 문장인지 판단하는 함수"""
+    preamble_patterns = [
+        r'본 계약은.*간의.*체결한다',
+        r'본 계약은.*간의.*다음과 같이',
+        r'본 계약서는.*간의.*체결한다',
+        r'본 계약서는.*간의.*다음과 같이',
+        r'^근로계약서$',
+        r'^임대차계약서$',
+        r'^매매계약서$',
+        r'^도급계약서$',
+        r'^용역계약서$',
+    ]
+    
+    for pattern in preamble_patterns:
+        if re.search(pattern, text):
+            return True
+    return False
+
 def group_articles_by_clause(articles):
     """조항별로 그룹화하는 함수 - 문장 안에서 '제N조' 패턴 찾기"""
     from app.schemas.contract.types import Article, Sentence
@@ -68,17 +91,23 @@ def group_articles_by_clause(articles):
     current_clause = None
     current_sentences = []
     non_article_sentences = []  # 조항이 아닌 문장들
+    preamble_sentences = []  # 서문 문장들
     
     for article in articles:
         for sentence in article.sentences:
-            # 조항이 아닌 문장인지 먼저 확인
+            # 서문 문장인지 먼저 확인
+            if is_preamble_sentence(sentence.text):
+                preamble_sentences.append(sentence)
+                continue
+            
+            # 조항이 아닌 문장인지 확인
             if is_non_article_sentence(sentence.text):
                 # 조항이 아닌 문장은 별도로 저장 (숫자 제거하지 않음)
                 non_article_sentences.append(sentence)
                 continue
             
-            # 문장 안에서 "제n조 (내용)" 패턴 찾기
-            clause_match = re.search(r'제\s*(\d+)\s*조\s*(\([^)]+\))?', sentence.text)
+            # 문장 안에서 "제n조" 패턴 찾기 (괄호 있음/없음 모두 처리)
+            clause_match = re.search(r'제\s*(\d+)\s*조(?:\s*\([^)]+\))?', sentence.text)
             
             if clause_match:
                 # 새로운 조항이 시작됨
@@ -91,13 +120,17 @@ def group_articles_by_clause(articles):
                 
                 # 새 조항 시작
                 clause_num = clause_match.group(1)
-                clause_content = clause_match.group(2)  # 괄호 내용
                 
-                # 제목 생성 (괄호 내용 포함)
-                if clause_content:
-                    title = f'제{clause_num}조 {clause_content}'
-                else:
-                    title = f'제{clause_num}조'
+                # 제목 생성 (괄호 내용이 있으면 포함)
+                full_match = clause_match.group(0)  # 전체 매칭된 문자열
+                title = f'제{clause_num}조'
+                
+                # 괄호 내용이 있으면 제목에 포함
+                if '(' in full_match and ')' in full_match:
+                    # 괄호 내용 추출
+                    paren_match = re.search(r'\(([^)]+)\)', full_match)
+                    if paren_match:
+                        title = f'제{clause_num}조 ({paren_match.group(1)})'
                 
                 current_clause = clause_num
                 current_sentences = []
@@ -108,8 +141,8 @@ def group_articles_by_clause(articles):
                     'sentences': []
                 }
                 
-                # 문장에서 "제n조 (내용)" 부분을 제거하고 실제 내용만 추출
-                clean_text = re.sub(r'제\s*\d+\s*조\s*\([^)]+\)\s*', '', sentence.text).strip()
+                # 문장에서 "제n조" 부분을 제거하고 실제 내용만 추출
+                clean_text = re.sub(r'제\s*\d+\s*조(?:\s*\([^)]+\))?\s*', '', sentence.text).strip()
                 
                 # 문장 시작의 불필요한 숫자 제거 (예: "1 근로시간은..." → "근로시간은...")
                 clean_text = re.sub(r'^\s*\d+\s*', '', clean_text).strip()
@@ -127,6 +160,7 @@ def group_articles_by_clause(articles):
             else:
                 # 조항 내 문장들
                 if current_clause:
+                    # 현재 조항에 속하는 문장
                     clean_text = sentence.text.strip()
                     
                     # 괄호 내용 뒤의 불필요한 숫자 제거 (예: "(근로시간 및 휴게시간) 1" → "(근로시간 및 휴게시간)")
@@ -145,12 +179,29 @@ def group_articles_by_clause(articles):
                         )
                         current_sentences.append(sentence_obj)
                         grouped[current_clause]['sentences'].append(sentence_obj)
+                else:
+                    # 조항 매칭에 실패한 문장들은 기타사항으로 분류
+                    non_article_sentences.append(sentence)
     
-    # 마지막 조항은 이미 grouped에 저장되어 있음
-    # 추가 처리 불필요
+    # 마지막 조항 저장
+    if current_clause and current_sentences:
+        grouped[current_clause] = {
+            'title': grouped[current_clause]['title'],
+            'sentences': current_sentences.copy()
+        }
     
     # Article 객체로 변환
     result = []
+    
+    # 서문이 있으면 맨 앞에 추가
+    if preamble_sentences:
+        result.append(Article(
+            id="preamble",
+            title="서문",
+            sentences=preamble_sentences
+        ))
+    
+    # 조항들을 순서대로 추가
     for clause_num, data in grouped.items():
         result.append(Article(
             id=int(clause_num),
