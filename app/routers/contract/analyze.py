@@ -43,10 +43,14 @@ def extract_document_title(articles):
 
 def is_non_article_sentence(text):
     """조항이 아닌 문장인지 판단하는 함수"""
+    # 먼저 조항인지 확인 (제N조 패턴이 있으면 조항으로 간주)
+    if re.search(r'제\s*(\d+)\s*조', text):
+        return False
+    
     non_article_patterns = [
         r'본 계약의 효력을 증명하기 위하여',
         r'계약 당사자가 서명 또는 날인한다',
-        r'\d{4}년 \d{1,2}월 \d{1,2}일',
+        r'^\d{4}년 \d{1,2}월 \d{1,2}일',  # 문장 시작에 날짜만 있는 경우
         r'사용자\(대표자\)',
         r'근로자:',
         r'임대인:',
